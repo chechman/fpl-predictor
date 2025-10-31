@@ -103,41 +103,7 @@ function App() {
     </div>
   )
 }
-{/* Price Change Alerts */}
-      {(data.squad.filter(p => p.priceChange.likelihood !== 'stable').length > 0) && (
-        <div className="card">
-          <h2>💰 Price Change Alerts</h2>
-          <div className="price-alerts">
-            {data.squad
-              .filter(p => p.priceChange.likelihood !== 'stable')
-              .sort((a, b) => {
-                const urgencyOrder = { high: 0, medium: 1, none: 2 }
-                return urgencyOrder[a.priceChange.urgency] - urgencyOrder[b.priceChange.urgency]
-              })
-              .map((player, idx) => (
-                <div key={idx} className={`price-alert price-alert-${player.priceChange.urgency}`}>
-                  <div className="price-alert-player">
-                    <strong>{player.name}</strong> ({player.team})
-                  </div>
-                  <div className="price-alert-status">
-                    {player.priceChange.likelihood === 'rising' ? '📈 Rising' : '📉 Falling'}
-                    {' - '}
-                    <span className="price-alert-time">
-                      {player.priceChange.timeframe === 'tonight' ? '⚠️ TONIGHT' : `in ${player.priceChange.timeframe}`}
-                    </span>
-                  </div>
-                  <div className="price-alert-advice">
-                    {player.priceChange.likelihood === 'rising' 
-                      ? 'Buy now to save £0.1m!' 
-                      : player.priceChange.urgency === 'high'
-                        ? 'Sell tonight or lose £0.1m!'
-                        : 'Consider selling soon'}
-                  </div>
-                </div>
-              ))}
-          </div>
-        </div>
-      )}
+
 function Results({ data }) {
   return (
     <div className="results">
@@ -176,27 +142,20 @@ function Results({ data }) {
             <div>Rating</div>
           </div>
           {data.squad.map((player, idx) => (
-  <div key={idx} className="player-row">
-    <div className="player-name">
-      {player.name}{' '}
-      <span style={{ color: '#6b7280', fontSize: '0.875rem' }}>({player.team})</span>
-      {player.priceChange.likelihood !== 'stable' && (
-        <span className={`price-badge price-${player.priceChange.likelihood} price-${player.priceChange.urgency}`}>
-          {player.priceChange.likelihood === 'rising' ? '📈' : '📉'}
-          {player.priceChange.urgency === 'high' ? ' TONIGHT' : ` ${player.priceChange.timeframe}`}
-        </span>
-      )}
-    </div>
-    <div>{player.form}</div>
-    <div>£{player.price}m</div>
-    <div style={{ fontSize: '0.875rem' }}>{player.fixtures}</div>
-    <div>
-      <span className={`badge badge-${player.ratingClass}`}>
-        {player.rating}
-      </span>
-    </div>
-  </div>
-))}
+            <div key={idx} className="player-row">
+              <div className="player-name">
+                {player.name} <span style={{ color: '#6b7280', fontSize: '0.875rem' }}>({player.team})</span>
+              </div>
+              <div>{player.form}</div>
+              <div>£{player.price}m</div>
+              <div style={{ fontSize: '0.875rem' }}>{player.fixtures}</div>
+              <div>
+                <span className={`badge badge-${player.ratingClass}`}>
+                  {player.rating}
+                </span>
+              </div>
+            </div>
+          ))}
         </div>
       </div>
 
