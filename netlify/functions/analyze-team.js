@@ -74,32 +74,159 @@ exports.handler = async (event) => {
 
     // Analyze current squad
     const squad = picksData.picks.map(pick => {
-      const player = playersMap.get(pick.element)
-      const fixtures = teamFixtures.get(player.team_code)?.slice(0, 5) || []
-      const avgDifficulty = fixtures.reduce((sum, f) => sum + f.difficulty, 0) / fixtures.length || 3
-      
-      return {
-        id: player.id,
-        name: player.web_name,
-        team: player.team,
-        position: getPosition(player.element_type),
-        price: player.now_cost / 10,
-        form: parseFloat(player.form).toFixed(1),
-        selectedBy: player.selected_by_percent,
-        fixtures: fixtures.map(f => f.opponent).join(', '),
-        avgDifficulty: avgDifficulty.toFixed(1),
-        rating: getRating(parseFloat(player.form), avgDifficulty),
-        ratingClass: getRatingClass(parseFloat(player.form), avgDifficulty),
-        totalPoints: player.total_points,
-        pointsPerGame: player.points_per_game,
-        isCaptain: pick.is_captain,
-        isViceCaptain: pick.is_vice_captain
-      }
-    })
+  const player = playersMap.get(pick.element)
+  const fixtures = teamFixtures.get(player.team_code)?.slice(0, 5) || []
+  const avgDifficulty = fixtures.reduce((sum, f) => sum + f.difficulty, 0) / fixtures.length || 3
+  const priceChange = getPriceChangeStatus(player)
+  
+  return {
+    id: player.id,
+    name: player.web_name,
+    team: player.team,
+    position: getPosition(player.element_type),
+    price: player.now_cost / 10,
+    form: parseFloat(player.form).toFixed(1),
+    selectedBy: player.selected_by_percent,
+    fixtures: fixtures.map(f => f.opponent).join(', '),
+    avgDifficulty: avgDifficulty.toFixed(1),
+    rating: getRating(parseFloat(player.form), avgDifficulty),
+    ratingClass: getRatingClass(parseFloat(player.form), avgDifficulty),
+    totalPoints: player.total_points,
+    pointsPerGame: player.points_per_game,
+    isCaptain: pick.is_captain,
+    isViceCaptain: pick.is_vice_captain,
+    priceChange
+  }
+})
 
     // Find transfer opportunities
-    const transfers = findTransferOpportunities(squad, playersMap, teamFixtures, teamData.last_deadline_bank / 10)
+   function findTransferOpportunities(squad, playersMap, teamFixtures, bank) {
+  const transfers = []
 
+  // Find players to transfer out (poor form + hard fixtures + price falling)
+  const transferOutCandidates = squad
+    .filter(p => parseFloat(p.form) < 3 || parseFloat(p.avgDifficulty) > 3.5)
+    .sort((a, b) => {
+      // Prioritize players about to drop in price
+      const aPlayer = playersMap.get(a.id)
+      const bPlayer = playersMap.get(b.id)
+      const aDrop = getPriceChangeStatus(aPlayer).likelihood === 'falling' ? -1 : 0
+      const bDrop = getPriceChangeStatus(bPlayer).likelihood === 'falling' ? -1 : 0
+      if (aDrop !== bDrop) return aDrop - bDrop
+      return parseFloat(a.form) - parseFloat(b.form)
+    })
+    .slice(0, 3)
+
+  transferOutCandidates.forEach(playerOut => {
+    const alternatives = Array.from(playersMap.values())
+      .filter(p => 
+        getPosition(p.element_type) === playerOut.position &&
+        p.now_cost / 10 <= playerOut.price + bank &&
+        parseFloat(p.form) > parseFloat(playerOut.form) &&
+        p.id !== playerOut.id &&
+        !squad.find(s => s.id === p.id)
+      )
+      .map(p => {
+        const fixtures = teamFixtures.get(p.team)?.slice(0, 5) || []
+        const avgDiff = fixtures.reduce((sum, f) => sum + f.difficulty, 0) / fixtures.length || 3
+        const priceChange = getPriceChangeStatus(p)
+        return { ...p, avgDifficulty: avgDiff, fixtures, priceChange }
+      })
+      .sort((a, b) => {
+        // Prioritize players about to rise
+        const aRise = a.priceChange.likelihood === 'rising' ? 1 : 0
+        const bRise = b.priceChange.likelihood === 'rising' ? 1 : 0
+        if (aRise !== bRise) return bRise - aRise
+        
+        const scoreA = parseFloat(a.form) * 2 - a.avgDifficulty
+        const scoreB = parseFloat(b.form) * 2 - b.avgDifficulty
+        return scoreB - scoreA
+      })
+      .slice(0, 1)
+
+    if (alternatives.length > 0) {
+      const playerIn = alternatives[0]
+      const cost = (playerIn.now_cost / 10) - playerOut.price
+      const projectedPoints = (parseFloat(playerIn.form) - parseFloat(playerOut.form)) * 5
+
+      transfers.push({
+        playerOut: {
+          name: playerOut.name,
+          team: playerOut.team,
+          form: playerOut.form,
+          price: playerOut.price,
+          fixtures: playerOut.fixtures,
+          priceChange: getPriceChangeStatus(playersMap.get(playerOut.id))
+        },
+        playerIn: {
+          name: playerIn.web_name,
+          team: playerIn.team,
+          form: parseFloat(playerIn.form).toFixed(1),
+          price: playerIn.now_cost / 10,
+          fixtures: playerIn.fixtures.map(f => f.opponent).join(', '),
+          priceChange: playerIn.priceChange
+        },
+        cost: cost.toFixed(1),
+        projectedPoints: projectedPoints.toFixed(1),
+        reasoning: {
+          out: `Form ${playerOut.form}, ${playerOut.fixtures}${getPriceChangeStatus(playersMap.get(playerOut.id)).likelihood === 'falling' ? ' ⚠️ Price likely to DROP' : ''}`,
+          in: `Form ${parseFloat(playerIn.form).toFixed(1)}, ${playerIn.fixtures.map(f => f.opponent).join(', ')}${playerIn.priceChange.likelihood === 'rising' ? ' 📈 Price likely to RISE' : ''}, ${playerIn.selected_by_percent}% owned`
+        }
+      })
+    }
+  })
+
+  return transfers.slice(0, 2)
+}
+function getPriceChangeStatus(player) {
+  // Calculate net transfers
+  const transfersIn = player.transfers_in_event || 0
+  const transfersOut = player.transfers_out_event || 0
+  const netTransfers = transfersIn - transfersOut
+  
+  // Estimate total players (roughly 10 million)
+  const totalPlayers = 10000000
+  const ownership = parseFloat(player.selected_by_percent) / 100
+  const ownedBy = totalPlayers * ownership
+  
+  // Threshold: roughly 0.5% of owners need to transfer for price change
+  const threshold = ownedBy * 0.005
+  
+  // Calculate percentage of threshold reached
+  const percentage = Math.abs(netTransfers) / threshold * 100
+  
+  let likelihood = 'stable'
+  let timeframe = null
+  let urgency = 'none'
+  
+  if (netTransfers > threshold * 0.8) {
+    likelihood = 'rising'
+    if (netTransfers > threshold * 1.5) {
+      timeframe = 'tonight'
+      urgency = 'high'
+    } else {
+      timeframe = '1-2 days'
+      urgency = 'medium'
+    }
+  } else if (netTransfers < -threshold * 0.8) {
+    likelihood = 'falling'
+    if (netTransfers < -threshold * 1.5) {
+      timeframe = 'tonight'
+      urgency = 'high'
+    } else {
+      timeframe = '1-2 days'
+      urgency = 'medium'
+    }
+  }
+  
+  return {
+    likelihood, // 'rising', 'falling', 'stable'
+    netTransfers,
+    percentage: Math.round(percentage),
+    timeframe, // 'tonight', '1-2 days', null
+    urgency // 'high', 'medium', 'none'
+  }
+}
     // Captain recommendations
     const captains = getCaptainRecommendations(squad, teamFixtures)
 
